@@ -1,0 +1,39 @@
+{
+  "name": "outreach-desk",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next dev -p 3010",
+    "build": "prisma generate && next build",
+    "start": "next start -p 3010",
+    "test": "node --import tsx --test src/lib/apollo.test.ts",
+    "db:push": "prisma db push",
+    "browser": "playwright install chromium",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.16.0",
+    "imapflow": "^1.0.193",
+    "jose": "^6.1.0",
+    "mailparser": "^3.7.4",
+    "next": "^15.5.26",
+    "nodemailer": "^6.10.1",
+    "playwright": "^1.55.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^22.18.0",
+    "@types/nodemailer": "^6.4.17",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "prisma": "^6.16.0",
+    "tailwindcss": "^4.1.13",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

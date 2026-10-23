@@ -1,0 +1,18 @@
+node_modules
+.next
+dist
+coverage
+*.log
+.env
+.env.local
+*.tsbuildinfo
+.DS_Store
+# Leads, screenshots, mail attachments and the concept site copy. Only the brand logo is tracked.
+storage/*
+!storage/brand/
+# The database and its backups hold lead and mail data.
+prisma/*.db
+prisma/*.db-*
+prisma/*.db.*
+.claude/
+/.next-test/

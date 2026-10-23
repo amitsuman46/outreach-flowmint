@@ -1,0 +1,147 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Person exported from Apollo. Separate from any inbound website enquiry.
+model Prospect {
+  id              String   @id @default(cuid())
+  apolloContactId String?  @unique
+  firstName       String   @default("")
+  lastName        String   @default("")
+  name            String
+  title           String?
+  company         String
+  email           String?  @unique
+  emailStatus     String?
+  website         String?
+  industry        String?
+  employees       String?
+  city            String?
+  state           String?
+  country         String?
+  linkedin        String?
+  technologies    String?
+  keywords        String?
+  seniority       String?
+  departments     String?
+  qualifyContact  String?
+  annualRevenue   String?
+  /// Original spreadsheet row as JSON.
+  raw             String   @default("{}")
+  /// imported | fit | rejected | audited | drafted | sent | replied
+  status          String   @default("imported")
+  rejectReason    String?
+  lastError       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  audit    Audit?
+  proposal Proposal?
+  messages OutreachMessage[]
+  inbox    InboxMessage[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Audit {
+  id             String   @id @default(cuid())
+  prospectId     String   @unique
+  prospect       Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  pageUrl        String
+  screenshotPath String?
+  pageText       String?
+  /// JSON array of { area, observation, suggestion }.
+  findings       String   @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model OutreachMessage {
+  id         String    @id @default(cuid())
+  prospectId String
+  prospect   Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  subject    String
+  body       String
+  /// draft | sent | failed
+  status     String    @default("draft")
+  messageId  String?
+  sentAt     DateTime?
+  error      String?
+  /// Set when SMTP delivered but the copy into the Hostinger Sent folder failed.
+  sentCopyError String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([prospectId])
+  @@index([status])
+}
+
+/// Per-lead concept page on the Netlify demo site, plus the PDF proposal.
+model Proposal {
+  id         String    @id @default(cuid())
+  prospectId String    @unique
+  prospect   Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  /// Folder name on the demo site, e.g. amc-psychology-k3x9p2.
+  slug       String    @unique
+  /// JSON: { summary, drawbacks, improvements, results }.
+  content    String    @default("{}")
+  /// JSON: copy used by the concept page.
+  site       String    @default("{}")
+  /// JSON: { primary, logo, bookingUrl } taken from their homepage.
+  brand      String    @default("{}")
+  hasPdf     Boolean   @default(false)
+  /// When the local files were last written. Needs a deploy while deployedAt is older.
+  builtAt    DateTime  @default(now())
+  deployedAt DateTime?
+  deployError String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model InboxMessage {
+  id         String    @id @default(cuid())
+  prospectId String?
+  prospect   Prospect? @relation(fields: [prospectId], references: [id], onDelete: SetNull)
+  /// in | out
+  direction  String
+  from       String
+  to         String
+  subject     String
+  body        String
+  /// JSON array of { id, name, size, type } for files stored under storage/mail.
+  attachments String    @default("[]")
+  messageId   String?   @unique
+  receivedAt  DateTime
+  createdAt  DateTime  @default(now())
+
+  @@index([prospectId])
+  @@index([receivedAt])
+}
+
+model OutreachRun {
+  id        String   @id @default(cuid())
+  /// prepare | refresh
+  kind      String   @default("prepare")
+  /// running | done | error
+  status    String
+  total     Int
+  done      Int      @default(0)
+  /// What the run is doing right now, shown under the progress bar.
+  step      String?
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MailCursor {
+  id          String  @id
+  lastUid     Int     @default(0)
+  /// IMAP UIDVALIDITY. When it changes the folder was renumbered and the cursor restarts.
+  uidValidity String?
+}
