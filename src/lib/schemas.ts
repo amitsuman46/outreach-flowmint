@@ -39,6 +39,7 @@ export type LoginInput = z.infer<typeof loginSchema>;
 
 export interface ProspectListItem {
   id: string;
+  mode: LeadMode;
   name: string;
   title: string | null;
   company: string;
@@ -51,7 +52,11 @@ export interface ProspectListItem {
   rejectReason: string | null;
   qualifyContact: string | null;
   lastError: string | null;
+  /** When the lead was first uploaded. */
+  createdAt: string;
   updatedAt: string;
+  /** A concept page exists for this lead (With PPT). */
+  hasConcept?: boolean;
 }
 
 export interface DraftView {
@@ -68,6 +73,9 @@ export interface DraftView {
 
 export interface AuditView {
   pageUrl: string;
+  reachable: boolean;
+  /** "blocked", or "down: <what happened>" when the site could not be opened. */
+  unreachableReason: string | null;
   hasScreenshot: boolean;
   pageText: string | null;
   findings: Finding[];
@@ -108,6 +116,7 @@ export interface InboxItem {
 export interface RunView {
   id: string;
   kind: "prepare" | "refresh";
+  mode: LeadMode;
   status: "running" | "done" | "error";
   total: number;
   done: number;
@@ -181,4 +190,11 @@ export interface ProposalView {
   deployError: string | null;
   needsDeploy: boolean;
   content: ProposalContent;
+}
+
+/** ppt: concept site + PDF proposal. template: one shared template site, proposal written into the email. */
+export type LeadMode = "ppt" | "template";
+
+export function asMode(value: unknown): LeadMode {
+  return value === "template" ? "template" : "ppt";
 }

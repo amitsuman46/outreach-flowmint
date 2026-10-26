@@ -1,6 +1,6 @@
 import type { ParsedProspect } from "./apollo";
 import { prisma } from "./prisma";
-import type { ProspectStatus } from "./schemas";
+import type { LeadMode, ProspectStatus } from "./schemas";
 import { applyImportStatus } from "./status";
 
 export interface ImportResult {
@@ -8,10 +8,13 @@ export interface ImportResult {
   updated: number;
   rejected: number;
   skipped: number;
+  /** Already being worked on in the other workflow, so left there. */
+  otherList: number;
 }
 
 interface ExistingRow {
   id: string;
+  mode: string;
   email: string | null;
   apolloContactId: string | null;
   status: string;
@@ -35,10 +38,12 @@ function asStatus(status: string): ProspectStatus {
 
 export async function importProspects(
   rows: ParsedProspect[],
+  mode: LeadMode = "ppt",
 ): Promise<ImportResult> {
   const existing = await prisma.prospect.findMany({
     select: {
       id: true,
+      mode: true,
       email: true,
       apolloContactId: true,
       status: true,
@@ -59,6 +64,7 @@ export async function importProspects(
     updated: 0,
     rejected: 0,
     skipped: 0,
+    otherList: 0,
   };
 
   for (const row of rows) {
@@ -84,7 +90,14 @@ export async function importProspects(
       next = { status: history, rejectReason: null };
     }
 
+    // A lead nobody has worked on yet moves to the list it was just uploaded to.
+    // One that is already reviewed, drafted or sent stays in its own workflow.
+    const untouched = !match || match.status === "imported" || match.status === "rejected";
+    const leadMode = untouched ? mode : (match.mode as LeadMode);
+    if (match && !untouched && match.mode !== mode) result.otherList += 1;
+
     const data = {
+      mode: leadMode,
       apolloContactId: row.apolloContactId,
       firstName: row.firstName,
       lastName: row.lastName,
@@ -116,7 +129,7 @@ export async function importProspects(
       if (!match) {
         const created = await prisma.prospect.create({
           data: { ...data, lastError: null },
-          select: { id: true, email: true, apolloContactId: true, status: true, rejectReason: true },
+          select: { id: true, mode: true, email: true, apolloContactId: true, status: true, rejectReason: true },
         });
         if (history && created.email) await linkMailHistory(created.id, created.email);
         if (created.apolloContactId) byApollo.set(created.apolloContactId, created);
@@ -135,7 +148,7 @@ export async function importProspects(
             apolloContactId: data.apolloContactId ?? undefined,
             lastError: next.status === "imported" ? null : undefined,
           },
-          select: { id: true, email: true, apolloContactId: true, status: true, rejectReason: true },
+          select: { id: true, mode: true, email: true, apolloContactId: true, status: true, rejectReason: true },
         });
         if (match.apolloContactId && match.apolloContactId !== updated.apolloContactId) {
           byApollo.delete(match.apolloContactId);

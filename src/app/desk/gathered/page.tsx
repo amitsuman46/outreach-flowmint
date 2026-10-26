@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function GatheredPage() {
   const rows = await prisma.prospect.findMany({
-    where: { status: { in: ["imported", "fit", "audited", "drafted", "sent", "replied"] } },
+    where: { mode: "ppt", status: { in: ["imported", "fit", "audited", "drafted", "sent", "replied"] } },
     orderBy: { updatedAt: "desc" },
     include: {
       proposal: { select: { builtAt: true } },
@@ -19,9 +19,10 @@ export default async function GatheredPage() {
   return (
     <div>
       <PageHeader
+        eyebrow="With PPT"
         title="Leads"
         description="Everyone still in play, from imported to replied. Open a lead to review the concept, the PDF and the draft."
-        action={<RefreshButton count={drafted} label={`Refresh all drafts (${drafted})`} />}
+        action={<RefreshButton mode="ppt" count={drafted} label={`Refresh all drafts (${drafted})`} />}
       />
       <ProspectTable
         rows={rows.map(toListItem)}

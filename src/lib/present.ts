@@ -5,7 +5,7 @@ import { ensureOptOut } from "./opt-out";
 import { parseFindings } from "./pipeline";
 import { prisma } from "./prisma";
 import { toProposalView } from "./proposal";
-import type { ProspectDetail, ProspectListItem, ProspectStatus } from "./schemas";
+import { asMode, type ProspectDetail, type ProspectListItem, type ProspectStatus } from "./schemas";
 import { screenshotFile } from "./audit";
 
 export function asStatus(status: string): ProspectStatus {
@@ -36,6 +36,7 @@ export function toListItem(prospect: Prospect): ProspectListItem {
     id: prospect.id,
     name: prospect.name,
     title: prospect.title,
+    mode: asMode(prospect.mode),
     company: prospect.company,
     email: prospect.email,
     emailStatus: prospect.emailStatus,
@@ -46,6 +47,7 @@ export function toListItem(prospect: Prospect): ProspectListItem {
     rejectReason: prospect.rejectReason,
     qualifyContact: prospect.qualifyContact,
     lastError: prospect.lastError,
+    createdAt: prospect.createdAt.toISOString(),
     updatedAt: prospect.updatedAt.toISOString(),
   };
 }
@@ -79,6 +81,8 @@ export function toDetail(
     audit: prospect.audit
       ? {
           pageUrl: prospect.audit.pageUrl,
+          reachable: prospect.audit.reachable,
+          unreachableReason: prospect.audit.unreachableReason,
           hasScreenshot: Boolean(prospect.audit.screenshotPath),
           pageText: prospect.audit.pageText,
           findings: parseFindings(prospect.audit.findings),
@@ -110,21 +114,31 @@ export async function readScreenshot(prospectId: string): Promise<Buffer | null>
 }
 
 const ACTIVE = ["imported", "fit", "audited", "drafted"];
+/** What the Leads pages show: everyone except rejected. */
+const LISTED = [...ACTIVE, "sent", "replied"];
 
 export async function deskCounts(): Promise<DeskCounts> {
   const [grouped, sent, replies] = await Promise.all([
-    prisma.prospect.groupBy({ by: ["status"], _count: true }),
+    prisma.prospect.groupBy({ by: ["mode", "status"], _count: true }),
     // Everything in the Hostinger Sent folder, including mail sent from webmail.
     prisma.inboxMessage.count({ where: { direction: "out" } }),
     prisma.inboxMessage.count({ where: { direction: "in" } }),
   ]);
-  const byStatus = new Map(grouped.map((row) => [row.status, row._count]));
-  const gathered = ACTIVE.reduce((sum, status) => sum + (byStatus.get(status) ?? 0), 0);
+  const count = (mode: string | null, statuses: string[]) =>
+    grouped
+      .filter((row) => (mode === null || row.mode === mode) && statuses.includes(row.status))
+      .reduce((sum, row) => sum + row._count, 0);
   return {
-    gathered,
-    rejected: byStatus.get("rejected") ?? 0,
-    drafted: byStatus.get("drafted") ?? 0,
-    contacted: (byStatus.get("sent") ?? 0) + (byStatus.get("replied") ?? 0),
+    gathered: count("ppt", ACTIVE),
+    leads: count("ppt", LISTED),
+    rejected: count(null, ["rejected"]),
+    drafted: count("ppt", ["drafted"]),
+    template: {
+      gathered: count("template", ACTIVE),
+      drafted: count("template", ["drafted"]),
+      leads: count("template", LISTED),
+    },
+    contacted: count(null, ["sent", "replied"]),
     sent,
     replies,
     total: grouped.reduce((sum, row) => sum + row._count, 0),

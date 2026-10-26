@@ -6,7 +6,7 @@ import { ButtonLink, Card, PageHeader } from "@/components/ui";
 import Link from "next/link";
 import { aiReady } from "@/lib/ai";
 import { STATUS_LABEL } from "@/lib/labels";
-import { currentRun } from "@/lib/pipeline";
+import { currentRun, waitingWhere } from "@/lib/pipeline";
 import { deskCounts, toListItem } from "@/lib/present";
 import { prisma } from "@/lib/prisma";
 import type { ProspectStatus } from "@/lib/schemas";
@@ -29,20 +29,17 @@ export default async function DeskPage() {
     deskCounts(),
     currentRun(),
     prisma.prospect.findMany({
-      where: { status: { in: ["imported", "fit", "audited", "drafted"] } },
+      where: { mode: "ppt", status: { in: ["imported", "fit", "audited", "drafted"] } },
       orderBy: { updatedAt: "desc" },
       take: 6,
       include: { proposal: { select: { id: true } } },
     }),
-    prisma.prospect.groupBy({ by: ["status"], _count: true }),
-    prisma.prospect.count({
-      where: {
-        OR: [{ status: { in: ["imported", "fit", "audited"] } }, { status: "drafted", proposal: null }],
-      },
-    }),
+    prisma.prospect.groupBy({ by: ["status"], where: { mode: "ppt" }, _count: true }),
+    prisma.prospect.count({ where: waitingWhere("ppt") }),
     prisma.proposal.findMany({ select: { builtAt: true, deployedAt: true, deployError: true } }),
   ]);
   const byStatus = new Map(grouped.map((row) => [row.status, row._count]));
+  const pptTotal = grouped.reduce((sum, row) => sum + row._count, 0);
   const pending = proposals.filter((item) => !item.deployedAt || item.deployedAt < item.builtAt);
   const lastDeploy = proposals
     .map((item) => item.deployedAt)
@@ -50,7 +47,7 @@ export default async function DeskPage() {
     .sort((a, b) => b.getTime() - a.getTime())[0];
 
   const stats = [
-    { href: "/desk/gathered", label: "Leads in play", value: counts.gathered, icon: IconUsers, hint: `${counts.total} on file` },
+    { href: "/desk/gathered", label: "Leads in play", value: counts.gathered, icon: IconUsers, hint: `${pptTotal} in this workflow` },
     { href: "/desk/gathered", label: "Drafts to review", value: counts.drafted, icon: IconPencil, hint: "Waiting for approval" },
     { href: "/desk/sent", label: "Contacted", value: counts.contacted, icon: IconSend, hint: `${counts.sent} in Sent folder` },
     { href: "/desk/inbox", label: "Replies", value: counts.replies, icon: IconInbox, hint: "Received mail" },
@@ -59,8 +56,9 @@ export default async function DeskPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        eyebrow="With PPT"
         title="Overview"
-        description="Import leads, let Prepare build a concept page, PDF and draft for each, then review and send."
+        description="Each lead gets a concept on the template site, a PDF proposal and a draft. Review, then send."
         action={
           counts.drafted ? (
             <ButtonLink href="/desk/gathered" variant="primary" icon={<IconPencil size={15} />}>
@@ -88,11 +86,11 @@ export default async function DeskPage() {
         ))}
       </div>
 
-      {counts.total ? (
+      {pptTotal ? (
         <Card className="p-5">
           <div className="flex items-baseline justify-between">
             <h2 className="text-[15px] font-semibold text-slate-900">Pipeline</h2>
-            <p className="text-xs text-slate-500">{counts.total} people</p>
+            <p className="text-xs text-slate-500">{pptTotal} people</p>
           </div>
           <div className="mt-3 flex h-2.5 overflow-hidden rounded-full bg-slate-100">
             {FUNNEL.map(({ status, color }) => {
@@ -102,7 +100,7 @@ export default async function DeskPage() {
                 <div
                   key={status}
                   className={`${color} transition-all`}
-                  style={{ width: `${(value / counts.total) * 100}%` }}
+                  style={{ width: `${(value / pptTotal) * 100}%` }}
                   title={`${STATUS_LABEL[status]}: ${value}`}
                 />
               );
@@ -121,8 +119,8 @@ export default async function DeskPage() {
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <UploadCard />
-        <PrepareCard initialRun={run} aiReady={aiReady()} waiting={waiting} />
+        <UploadCard mode="ppt" />
+        <PrepareCard initialRun={run} aiReady={aiReady()} waiting={waiting} mode="ppt" />
       </div>
 
       <SiteCard

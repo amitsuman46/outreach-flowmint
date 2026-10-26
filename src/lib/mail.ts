@@ -11,10 +11,22 @@ import {
   type OutgoingFile,
   type StoredAttachment,
 } from "./attachments";
-import { renderEmailHtml, renderEmailText } from "./email-template";
+import {
+  renderEmailHtml,
+  renderEmailText,
+  renderProposalEmailHtml,
+  renderProposalEmailText,
+  TEMPLATE_LINK,
+  titleCase,
+} from "./email-template";
 import { ensureOptOut } from "./opt-out";
 import { prisma } from "./prisma";
+import { templateSiteUrl } from "./settings";
 import { demoPdfUrl, demoUrl, proposalPdfFile, signature } from "./site-config";
+
+function hasTemplateLink(body: string): boolean {
+  return body.includes(TEMPLATE_LINK);
+}
 
 export interface MailConfig {
   host: string;
@@ -99,6 +111,8 @@ export async function sendApprovedDraft(
 
   const cfg = mailConfig();
   const stored = ensureOptOut(body);
+  // Lead emails always go out with every word of the subject capitalised.
+  subject = titleCase(subject);
   const message = await prisma.outreachMessage.findFirst({
     where: { prospectId: id, status: "draft" },
     orderBy: { createdAt: "desc" },
@@ -110,22 +124,36 @@ export async function sendApprovedDraft(
     data: { subject: subject.trim(), body: stored, error: null },
   });
 
-  const parts = {
-    body: stored,
-    signature: signature(),
-    company: prospect.company,
-    demoUrl: options.includeDemo && proposal ? demoUrl(proposal.slug) : null,
-    pdfUrl: options.includeDemo && proposal?.hasPdf ? demoPdfUrl(proposal.slug) : null,
-    pdfAttached: Boolean(options.attachProposal),
-  };
-  const text = renderEmailText(parts);
+  let text: string;
+  let html: string;
+  if (prospect.mode === "template") {
+    // The proposal is the email itself, in the decorative layout, with the shared template site.
+    const templateUrl = await templateSiteUrl();
+    if (!templateUrl && hasTemplateLink(stored)) {
+      throw new Error("Add the template site link on the Without PPT overview before sending.");
+    }
+    const proposalParts = { body: stored, signature: signature(), company: prospect.company, templateUrl };
+    text = renderProposalEmailText(proposalParts);
+    html = renderProposalEmailHtml(proposalParts);
+  } else {
+    const parts = {
+      body: stored,
+      signature: signature(),
+      company: prospect.company,
+      demoUrl: options.includeDemo && proposal ? demoUrl(proposal.slug) : null,
+      pdfUrl: options.includeDemo && proposal?.hasPdf ? demoPdfUrl(proposal.slug) : null,
+      pdfAttached: Boolean(options.attachProposal),
+    };
+    text = renderEmailText(parts);
+    html = renderEmailHtml(parts);
+  }
 
   try {
     const sent = await sendOutreachMail({
       to: prospect.email,
       subject: subject.trim(),
       text,
-      html: renderEmailHtml(parts),
+      html,
       files: outgoing,
     });
     const attachments = await storeOutgoing(outgoing);

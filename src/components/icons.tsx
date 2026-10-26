@@ -90,6 +90,13 @@ export const IconPlus = (p: IconProps) => (
   <svg {...base(p)}><path d="M12 5v14M5 12h14" /></svg>
 );
 
+export const IconTrash = (p: IconProps) => (
+  <svg {...base(p)}><path d="M4 7h16" /><path d="M10 11v6M14 11v6" /><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" /><path d="M9 7V4h6v3" /></svg>
+);
+export const IconCalendar = (p: IconProps) => (
+  <svg {...base(p)}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>
+);
+
 export function FlowMintMark({ size = 24 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 40 40" fill="none" aria-hidden="true">

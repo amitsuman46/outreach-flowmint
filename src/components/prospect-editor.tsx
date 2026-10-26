@@ -2,7 +2,15 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CONCEPT_LINK, hasConceptLink, renderEmailHtml, type Signature } from "@/lib/email-template";
+import {
+  CONCEPT_LINK,
+  hasConceptLink,
+  renderEmailHtml,
+  renderProposalEmailHtml,
+  TEMPLATE_LINK,
+  titleCase,
+  type Signature,
+} from "@/lib/email-template";
 import { AREA_LABEL } from "@/lib/labels";
 import type { ProspectDetail } from "@/lib/schemas";
 import { IconAlert, IconCheck, IconExternal, IconEye, IconPaperclip, IconPencil, IconSend, IconSparkles, IconX } from "./icons";
@@ -18,12 +26,16 @@ export function ProspectEditor({
   mailReady,
   netlifyReady,
   signature,
+  templateUrl,
 }: {
   prospect: ProspectDetail;
   mailReady: boolean;
   netlifyReady: boolean;
   signature: Signature;
+  /** The shared template site, for "Without PPT" leads. */
+  templateUrl: string | null;
 }) {
+  const template = prospect.mode === "template";
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
       <div className="space-y-5">
@@ -31,14 +43,32 @@ export function ProspectEditor({
         <LeadFacts prospect={prospect} />
       </div>
       <div className="space-y-5 lg:sticky lg:top-4">
-        <ProposalPanel
-          prospectId={prospect.id}
-          proposal={prospect.proposal}
-          canBuild={Boolean(prospect.audit) && prospect.status !== "rejected"}
-          netlifyReady={netlifyReady}
-        />
+        {template ? (
+          <TemplateSiteInfo templateUrl={templateUrl} />
+        ) : prospect.audit && !prospect.audit.reachable ? (
+          <Card>
+            <CardHeader
+              icon={<IconAlert size={16} />}
+              title="No concept for this lead"
+              description="Their website couldn't be opened, so there's nothing to build a concept or PDF from. The email below is written for that case."
+            />
+          </Card>
+        ) : (
+          <ProposalPanel
+            prospectId={prospect.id}
+            proposal={prospect.proposal}
+            canBuild={Boolean(prospect.audit?.reachable) && prospect.status !== "rejected"}
+            netlifyReady={netlifyReady}
+          />
+        )}
         {/* Remount when the draft changes, e.g. after a background refresh, so the fields show the new text. */}
-        <EmailEditor key={prospect.draft?.updatedAt ?? "none"} prospect={prospect} mailReady={mailReady} signature={signature} />
+        <EmailEditor
+          key={prospect.draft?.updatedAt ?? "none"}
+          prospect={prospect}
+          mailReady={mailReady}
+          signature={signature}
+          templateUrl={templateUrl}
+        />
       </div>
     </div>
   );
@@ -90,6 +120,13 @@ function SiteReview({ prospect }: { prospect: ProspectDetail }) {
       )}
       <div className="p-5">
         <h2 className="text-[15px] font-semibold text-slate-900">Site review</h2>
+        {prospect.audit && !prospect.audit.reachable ? (
+          <Notice tone="warn" className="mt-3">
+            {prospect.audit.unreachableReason === "blocked"
+              ? "Their site blocks automated browsers, so it couldn't be reviewed. The email is a short introduction and doesn't mention the site."
+              : `Their site didn't load: ${(prospect.audit.unreachableReason ?? "").replace(/^down:\s*/, "").replace(/^Their website did not load \((.*)\)\.$/, "$1")}. The email kindly mentions it didn't load, which is often a reason for them to reply.`}
+          </Notice>
+        ) : null}
         <div className="mt-3 space-y-2.5">
           {(prospect.audit?.findings ?? []).map((finding, index) => (
             <div key={`${finding.area}-${index}`} className="rounded-xl border border-slate-100 p-3.5">
@@ -101,7 +138,7 @@ function SiteReview({ prospect }: { prospect: ProspectDetail }) {
               </p>
             </div>
           ))}
-          {prospect.audit && prospect.audit.findings.length === 0 ? (
+          {prospect.audit?.reachable && prospect.audit.findings.length === 0 ? (
             <p className="text-sm text-slate-500">The review did not return findings.</p>
           ) : null}
           {!prospect.audit ? <p className="text-sm text-slate-500">Not reviewed yet.</p> : null}
@@ -148,22 +185,53 @@ function LeadFacts({ prospect }: { prospect: ProspectDetail }) {
   );
 }
 
+function TemplateSiteInfo({ templateUrl }: { templateUrl: string | null }) {
+  return (
+    <Card>
+      <CardHeader
+        icon={<IconSparkles size={16} />}
+        title="Without PPT · template only"
+        description="No concept or PDF. The proposal is written into the email, with a button to the template site."
+      />
+      <div className="p-5">
+        {templateUrl ? (
+          <a
+            href={templateUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-4 py-3 font-mono text-[13px] text-slate-700 hover:bg-slate-100"
+          >
+            <span className="truncate">{templateUrl.replace(/^https?:\/\//, "")}</span>
+            <IconExternal size={14} className="shrink-0 text-slate-400" />
+          </a>
+        ) : (
+          <Notice tone="warn">Add the template site link on the Without PPT overview before sending.</Notice>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 function EmailEditor({
   prospect,
   mailReady,
   signature,
+  templateUrl,
 }: {
   prospect: ProspectDetail;
   mailReady: boolean;
   signature: Signature;
+  templateUrl: string | null;
 }) {
   const router = useRouter();
   const toast = useToast();
+  const template = prospect.mode === "template";
   const proposal = prospect.proposal;
   const live = Boolean(proposal && !proposal.needsDeploy);
   const [subject, setSubject] = useState(prospect.draft?.subject ?? "");
   const [body, setBody] = useState(prospect.draft?.body ?? "");
-  const [view, setView] = useState<"edit" | "preview">("edit");
+  // The designed email is the point of the template workflow, so it opens on the preview.
+  const [view, setView] = useState<"edit" | "preview">(prospect.mode === "template" ? "preview" : "edit");
   const [includeDemo, setIncludeDemo] = useState(live);
   const [attachPdf, setAttachPdf] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
@@ -175,15 +243,17 @@ function EmailEditor({
 
   const preview = useMemo(
     () =>
-      renderEmailHtml({
-        body,
-        signature,
-        company: prospect.company,
-        demoUrl: includeDemo && proposal ? proposal.demoUrl : null,
-        pdfUrl: includeDemo && proposal?.hasPdf ? proposal.pdfUrl : null,
-        pdfAttached: attachPdf,
-      }),
-    [body, signature, prospect.company, includeDemo, proposal, attachPdf],
+      template
+        ? renderProposalEmailHtml({ body, signature, company: prospect.company, templateUrl })
+        : renderEmailHtml({
+            body,
+            signature,
+            company: prospect.company,
+            demoUrl: includeDemo && proposal ? proposal.demoUrl : null,
+            pdfUrl: includeDemo && proposal?.hasPdf ? proposal.pdfUrl : null,
+            pdfAttached: attachPdf,
+          }),
+    [template, body, signature, prospect.company, templateUrl, includeDemo, proposal, attachPdf],
   );
 
   async function save() {
@@ -314,7 +384,13 @@ function EmailEditor({
           <div className="space-y-3 animate-fade-in">
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-slate-500">Subject</span>
-              <input value={subject} onChange={(event) => setSubject(event.target.value)} disabled={!canEdit} className={field} />
+              <input
+                value={subject}
+                onChange={(event) => setSubject(event.target.value)}
+                onBlur={() => setSubject(titleCase(subject))}
+                disabled={!canEdit}
+                className={field}
+              />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-slate-500">Message</span>
@@ -327,7 +403,12 @@ function EmailEditor({
               />
               <span className="mt-1 flex justify-between gap-3 text-[11px] text-slate-400">
                 <span>
-                  {linkMarker ? (
+                  {template ? (
+                    <>
+                      <code className="font-mono text-slate-500">## Heading</code>, <code className="font-mono text-slate-500">- **Title**: text</code>{" "}
+                      and <code className="font-mono text-slate-500">{TEMPLATE_LINK}</code> become the designed layout
+                    </>
+                  ) : linkMarker ? (
                     <>
                       <code className="font-mono text-slate-500">{CONCEPT_LINK}</code> becomes 👉 the concept link
                     </>
@@ -350,7 +431,7 @@ function EmailEditor({
               </p>
               <p>
                 <span className="inline-block w-14">Subject</span>
-                <span className="font-medium text-slate-800">{subject}</span>
+                <span className="font-medium text-slate-800">{titleCase(subject)}</span>
               </p>
               {attachPdf || files.length ? (
                 <p className="flex items-center">
@@ -373,8 +454,13 @@ function EmailEditor({
           </div>
         )}
 
+        {canEdit && template && !templateUrl ? (
+          <Notice tone="warn">Add the template site link on the Without PPT overview. The button in this email needs it.</Notice>
+        ) : null}
         {canEdit ? (
           <div className="space-y-2 rounded-xl bg-slate-50 p-3.5">
+            {template ? null : (
+              <>
             <Toggle
               checked={includeDemo}
               onChange={setIncludeDemo}
@@ -395,6 +481,8 @@ function EmailEditor({
               label="Attach proposal PDF"
               hint={proposal?.hasPdf ? "Attachments on a first email can lower inbox placement." : "Build the proposal first."}
             />
+              </>
+            )}
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[13px] text-slate-600 ring-1 ring-slate-200 hover:ring-slate-300">
                 <IconPaperclip size={13} />
@@ -418,7 +506,7 @@ function EmailEditor({
           </div>
         ) : null}
 
-        {canEdit && linkMarker && !includeDemo ? (
+        {canEdit && !template && linkMarker && !includeDemo ? (
           <Notice tone="warn">
             The concept link is switched off, so the {CONCEPT_LINK} line will be dropped. Check that the sentence before it
             still reads well, or switch the link on.

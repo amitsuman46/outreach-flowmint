@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { DeskCounts } from "@/lib/counts";
 import { DeskNav } from "./desk-nav";
 import { FlowMintMark, IconLogout } from "./icons";
@@ -39,8 +40,9 @@ export function DeskShell({
             </div>
           </div>
           <div className="scrollbar-thin flex-1 overflow-y-auto px-3">
-            <p className="px-3 pb-2 text-[11px] font-medium tracking-wider text-slate-500 uppercase">Workspace</p>
-            <DeskNav counts={counts} variant="side" />
+            <Suspense>
+              <DeskNav counts={counts} variant="side" />
+            </Suspense>
           </div>
           <div className="m-3 rounded-xl bg-white/4 p-3 ring-1 ring-white/6">
             <p className="mb-2 text-[11px] font-medium tracking-wider text-slate-500 uppercase">Connections</p>
@@ -72,7 +74,9 @@ export function DeskShell({
               <FlowMintMark size={22} />
               <span className="text-sm font-semibold">Outreach desk</span>
             </div>
-            <DeskNav counts={counts} variant="top" />
+            <Suspense>
+              <DeskNav counts={counts} variant="top" />
+            </Suspense>
           </div>
           <div className="sticky top-0 z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-slate-200/70 bg-[#f5f6f8]/85 px-4 backdrop-blur md:px-8">
             <div className="min-w-0 max-w-md flex-1">

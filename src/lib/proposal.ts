@@ -112,6 +112,9 @@ export async function buildProposal(prospectId: string, browser: Browser): Promi
   if (!prospect) throw new Error("That person is no longer on the desk");
   if (!prospect.audit) throw new Error("Review the website before building a proposal.");
   if (looksBlocked(prospect.audit.pageText)) throw new SiteBlockedError();
+  if (!prospect.audit.reachable) {
+    throw new Error("Their website couldn't be opened, so there is nothing to build a concept from. The email doesn't need one.");
+  }
 
   // The latest template from Netlify, so local renders and the next publish match the live site.
   await syncTemplate();

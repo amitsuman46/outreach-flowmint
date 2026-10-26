@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { startRefresh } from "@/lib/pipeline";
+import { asMode } from "@/lib/schemas";
 import { readSession } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -10,9 +11,9 @@ export async function POST(request: Request) {
   if (!session) {
     return NextResponse.json({ error: "Sign in required" }, { status: 401 });
   }
-  const input = (await request.json().catch(() => ({}))) as { ids?: unknown };
+  const input = (await request.json().catch(() => ({}))) as { ids?: unknown; mode?: unknown };
   const ids = Array.isArray(input.ids) ? input.ids.filter((id): id is string => typeof id === "string") : undefined;
-  const result = await startRefresh(ids);
+  const result = await startRefresh(asMode(input.mode), ids);
   if (!result.started) {
     return NextResponse.json({ error: "Another run is still going. Wait for it to finish.", run: result.run }, { status: 409 });
   }

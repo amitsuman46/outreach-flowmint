@@ -5,6 +5,7 @@ import {
   reviewPage,
   saveScreenshot,
   SiteBlockedError,
+  SiteUnreachableError,
 } from "./audit";
 import { PREPARE_BATCH } from "./constants";
 import { FIT_SYSTEM_PROMPT } from "./fit-prompt";
@@ -13,8 +14,9 @@ import { fitSchema, generateObject, AiNotConfiguredError } from "./ai";
 import { deploySite, NetlifyNotConfiguredError } from "./netlify";
 import { prisma } from "./prisma";
 import { buildProposal } from "./proposal";
-import type { Finding, RunView } from "./schemas";
+import { asMode, type Finding, type LeadMode, type RunView } from "./schemas";
 import { netlifyReady } from "./site-config";
+import { mobileFacts } from "./site-facts";
 import { findingsSchema } from "./schemas";
 
 /**
@@ -37,6 +39,7 @@ async function liveRun() {
 function asRun(run: {
   id: string;
   kind: string;
+  mode: string;
   status: string;
   total: number;
   done: number;
@@ -47,6 +50,7 @@ function asRun(run: {
   return {
     id: run.id,
     kind: run.kind === "refresh" ? "refresh" : "prepare",
+    mode: asMode(run.mode),
     status,
     total: run.total,
     done: run.done,
@@ -78,14 +82,16 @@ type Worker = (id: string, openBrowser: OpenBrowser, setStep: SetStep) => Promis
 /** Starts one background run unless another is already going. */
 async function launchRun(
   kind: "prepare" | "refresh",
+  mode: LeadMode,
   pick: () => Promise<string[]>,
   worker: Worker,
 ): Promise<{ started: boolean; run: RunView }> {
+  // One run at a time across both workflows: they share the browser, the AI quota and the publish step.
   const existing = await liveRun();
   if (existing) return { started: false, run: asRun(existing) };
   const ids = await pick();
   const run = await prisma.outreachRun.create({
-    data: { kind, status: ids.length ? "running" : "done", total: ids.length, done: 0 },
+    data: { kind, mode, status: ids.length ? "running" : "done", total: ids.length, done: 0 },
   });
   // Two clicks can land together. If an older run is also live, this one stands down.
   const live = await prisma.outreachRun.findFirst({
@@ -104,18 +110,24 @@ async function launchRun(
   return { started: true, run: asRun(run) };
 }
 
-export function startPrepare(): Promise<{ started: boolean; run: RunView }> {
+/** Leads in a workflow that Prepare still has work for. */
+export function waitingWhere(mode: LeadMode) {
+  return mode === "ppt"
+    ? {
+        mode,
+        // Drafts made before proposals existed get a concept page and PDF too.
+        OR: [{ status: { in: ["imported", "fit", "audited"] } }, { status: "drafted", proposal: null }],
+      }
+    : { mode, status: { in: ["imported", "fit", "audited"] } };
+}
+
+export function startPrepare(mode: LeadMode = "ppt"): Promise<{ started: boolean; run: RunView }> {
   return launchRun(
     "prepare",
+    mode,
     async () => {
-      // Drafts made before proposals existed get a concept page and PDF too.
       const prospects = await prisma.prospect.findMany({
-        where: {
-          OR: [
-            { status: { in: ["imported", "fit", "audited"] } },
-            { status: "drafted", proposal: null },
-          ],
-        },
+        where: waitingWhere(mode),
         orderBy: { createdAt: "asc" },
         take: PREPARE_BATCH,
         select: { id: true },
@@ -132,12 +144,13 @@ const REFRESH_LIMIT = 25;
  * Rebuilds the concept and PDF from the live site, then rewrites the email, for unsent drafts.
  * Pass ids to refresh specific leads; otherwise every unsent draft (up to 25) is refreshed.
  */
-export function startRefresh(ids?: string[]): Promise<{ started: boolean; run: RunView }> {
+export function startRefresh(mode: LeadMode, ids?: string[]): Promise<{ started: boolean; run: RunView }> {
   return launchRun(
     "refresh",
+    mode,
     async () => {
       const prospects = await prisma.prospect.findMany({
-        where: { status: "drafted", ...(ids?.length ? { id: { in: ids } } : {}) },
+        where: { mode, status: "drafted", ...(ids?.length ? { id: { in: ids } } : {}) },
         orderBy: { updatedAt: "asc" },
         take: REFRESH_LIMIT,
         select: { id: true },
@@ -151,6 +164,16 @@ export function startRefresh(ids?: string[]): Promise<{ started: boolean; run: R
 async function refreshProspect(id: string, openBrowser: OpenBrowser, setStep: SetStep): Promise<boolean> {
   const prospect = await prisma.prospect.findUnique({ where: { id }, include: { audit: true } });
   if (!prospect || prospect.status !== "drafted" || !prospect.audit) return false;
+  if (prospect.mode === "template" || !prospect.audit.reachable) {
+    // No concept or PDF to rebuild (template workflow, or a site that could not be opened).
+    try {
+      await setStep(`Rewriting email · ${prospect.company}`);
+      await writeDraft(id);
+    } catch (error) {
+      await prisma.prospect.update({ where: { id }, data: { lastError: plainPrepareError(error) } });
+    }
+    return false;
+  }
   let built = false;
   try {
     await setStep(`Rebuilding concept and PDF · ${prospect.company}`);
@@ -186,8 +209,16 @@ async function processBatch(runId: string, ids: string[], worker: Worker): Promi
   }, HEARTBEAT_MS);
   try {
     let note: string | null = null;
+    let failed = 0;
+    let firstFailure = "";
     for (const id of ids) {
       const built = await worker(id, openBrowser, setStep);
+      // A lead that hit an error keeps it on lastError. Count those so a run never looks clean when it wasn't.
+      const after = await prisma.prospect.findUnique({ where: { id }, select: { lastError: true } });
+      if (after?.lastError && !after.lastError.startsWith("Draft check:")) {
+        failed += 1;
+        firstFailure ||= after.lastError;
+      }
       // Publish each concept as soon as it is ready, so its link works without waiting for the batch.
       if (built && netlifyReady()) {
         await setStep("Publishing to Netlify");
@@ -201,6 +232,10 @@ async function processBatch(runId: string, ids: string[], worker: Worker): Promi
         where: { id: runId },
         data: { done: { increment: 1 } },
       });
+    }
+    if (failed) {
+      const failures = `${failed} of ${ids.length} ${ids.length === 1 ? "lead" : "leads"} failed: ${firstFailure}`;
+      note = note ? `${failures} ${note}` : failures;
     }
     await prisma.outreachRun.update({
       where: { id: runId },
@@ -241,7 +276,13 @@ async function advanceProspect(
       prospect = await prisma.prospect.findUnique({ where: { id }, include: { proposal: true } });
       if (!prospect || prospect.status !== "audited") return false;
     }
-    if ((prospect.status === "audited" || prospect.status === "drafted") && !prospect.proposal) {
+    const reviewed = await prisma.audit.findUnique({ where: { prospectId: id }, select: { reachable: true } });
+    if (
+      prospect.mode === "ppt" &&
+      reviewed?.reachable !== false &&
+      (prospect.status === "audited" || prospect.status === "drafted") &&
+      !prospect.proposal
+    ) {
       await setStep(`Building concept page and PDF · ${who}`);
       try {
         await buildProposal(prospect.id, await openBrowser());
@@ -316,16 +357,25 @@ async function audit(id: string, browser: Browser): Promise<void> {
   try {
     capture = await captureHomepage(browser, prospect.website);
   } catch (error) {
-    if (!(error instanceof SiteBlockedError)) throw error;
-    // Retrying will not help, and leaving it here would block the front of every batch.
-    await prisma.prospect.update({
-      where: { id },
-      data: { status: "rejected", rejectReason: error.message, lastError: null },
-    });
+    if (!(error instanceof SiteBlockedError) && !(error instanceof SiteUnreachableError)) throw error;
+    // The site can't be reviewed. Record why and carry on: the draft step writes a different
+    // email that doesn't rely on a review, instead of the lead failing or blocking the batch.
+    const data = {
+      pageUrl: prospect.website,
+      screenshotPath: null,
+      pageText: null,
+      findings: "[]",
+      facts: null,
+      reachable: false,
+      unreachableReason: error instanceof SiteBlockedError ? "blocked" : `down: ${error.message}`,
+    };
+    await prisma.audit.upsert({ where: { prospectId: id }, create: { prospectId: id, ...data }, update: data });
+    await prisma.prospect.update({ where: { id }, data: { status: "audited", lastError: null } });
     return;
   }
   const findings = await reviewPage(capture);
   const screenshotPath = await saveScreenshot(id, capture.screenshot);
+  const facts = capture.facts ? { ...capture.facts, mobile: await mobileFacts(browser, capture.pageUrl) } : null;
   await prisma.audit.upsert({
     where: { prospectId: id },
     create: {
@@ -334,12 +384,18 @@ async function audit(id: string, browser: Browser): Promise<void> {
       screenshotPath,
       pageText: capture.pageText,
       findings: JSON.stringify(findings),
+      facts: facts ? JSON.stringify(facts) : null,
+      reachable: true,
+      unreachableReason: null,
     },
     update: {
       pageUrl: capture.pageUrl,
       screenshotPath,
       pageText: capture.pageText,
       findings: JSON.stringify(findings),
+      facts: facts ? JSON.stringify(facts) : null,
+      reachable: true,
+      unreachableReason: null,
     },
   });
   await prisma.prospect.update({
@@ -373,9 +429,14 @@ export function plainPrepareError(error: unknown): string {
   if (/Executable doesn't exist|playwright/i.test(raw)) {
     return "The screenshot browser did not open. Prepare this person again.";
   }
+  // A database client older than the schema (the dev server was not restarted after an update).
+  if (/Unknown (argument|field|arg)|PrismaClientValidationError|Invalid `prisma\./i.test(raw)) {
+    return "The desk was updated while it was running. Stop it and run npm run dev again, then prepare again.";
+  }
   const quoted = raw.match(/"message"\s*:\s*"([^"]+)"/);
-  const line = (quoted?.[1] ?? raw.split("\n")[0] ?? raw).trim();
-  return line.slice(0, 180);
+  // Some messages start with a blank line, so take the first line that has text.
+  const line = (quoted?.[1] ?? raw.split("\n").find((part) => part.trim()) ?? "").trim();
+  return line.slice(0, 180) || "Prepare failed for this person. Try again.";
 }
 
 export function parseFindings(raw: string): Finding[] {

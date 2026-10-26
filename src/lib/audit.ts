@@ -1,9 +1,11 @@
+import { Resolver } from "node:dns/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { findingsSchema, type Finding } from "./schemas";
+import { desktopFacts, detectPlatform, type SiteFacts } from "./site-facts";
 import { auditSchema, generateObject } from "./ai";
 
 export const AUDIT_SYSTEM_PROMPT = `
@@ -39,10 +41,108 @@ export class SiteBlockedError extends Error {
   }
 }
 
+/** The site did not load at all: timed out, no DNS, refused, or a broken certificate. */
+export class SiteUnreachableError extends Error {
+  constructor(detail: string) {
+    super(`Their website did not load (${detail}).`);
+    this.name = "SiteUnreachableError";
+  }
+}
+
+/** Other spellings of the same address, tried when the given one does not load. */
+function addressVariants(website: string): string[] {
+  const variants = [website];
+  try {
+    const url = new URL(/^https?:\/\//i.test(website) ? website : `https://${website}`);
+    const host = url.hostname.startsWith("www.") ? url.hostname.slice(4) : `www.${url.hostname}`;
+    variants.push(`https://${host}${url.pathname}`);
+    variants.push(`http://${url.hostname}${url.pathname}`);
+  } catch {
+    // Keep only the original.
+  }
+  return [...new Set(variants)];
+}
+
+function plainLoadError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/Timeout/i.test(raw)) return "it timed out";
+  if (/ERR_NAME_NOT_RESOLVED|ENOTFOUND/i.test(raw)) return "the address could not be found";
+  if (/ERR_CONNECTION_REFUSED|ERR_CONNECTION_RESET|ERR_CONNECTION_CLOSED|ERR_EMPTY_RESPONSE/i.test(raw)) {
+    return "the server did not respond";
+  }
+  if (/ERR_CERT|SSL/i.test(raw)) return "its security certificate failed";
+  return raw.split("\n")[0].slice(0, 120);
+}
+
+/**
+ * Slow sites get a second, longer chance, then the www and http spellings are tried.
+ * Only when every attempt fails is the site treated as unreachable.
+ */
+/**
+ * True only when public DNS says the domain does not exist, with or without www.
+ * Some routers take 30 seconds to say so, which looks like a timeout in the browser.
+ */
+async function domainMissing(website: string): Promise<boolean> {
+  let host: string;
+  try {
+    host = new URL(/^https?:\/\//i.test(website) ? website : `https://${website}`).hostname.replace(/^www\./, "");
+  } catch {
+    return false;
+  }
+  const resolver = new Resolver({ timeout: 4000, tries: 1 });
+  resolver.setServers(["1.1.1.1", "8.8.8.8"]);
+  const missing = async (name: string) => {
+    try {
+      await resolver.resolve(name, "A");
+      return false;
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      // NXDOMAIN-style answers only. Timeouts or a blocked resolver prove nothing.
+      return code === "ENOTFOUND" || code === "ENODATA";
+    }
+  };
+  const [bare, www] = await Promise.all([missing(host), missing(`www.${host}`)]);
+  return bare && www;
+}
+
+async function openWithRetries(page: Page, website: string): Promise<void> {
+  if (await domainMissing(website)) throw new SiteUnreachableError("the address could not be found");
+  const [original, ...others] = addressVariants(website);
+  // The given address gets a normal try and a long one; other spellings get one shorter try.
+  // Worst case is about two minutes, after which the site counts as unreachable.
+  const attempts: [string, "domcontentloaded" | "commit", number][] = [
+    [original, "domcontentloaded", 30_000],
+    [original, "commit", 45_000],
+    ...others.map((address): [string, "commit", number] => [address, "commit", 20_000]),
+  ];
+  let firstError: unknown;
+  let unresolved = false;
+  for (const [address, waitUntil, timeout] of attempts) {
+    // A failed DNS lookup won't fix itself on a longer wait; only other spellings are worth trying.
+    if (unresolved && address === original) continue;
+    try {
+      const response = await page.goto(address, { waitUntil, timeout });
+      if (waitUntil === "commit") {
+        // The server answered; give the page time to render something.
+        await page.waitForLoadState("domcontentloaded", { timeout: 30_000 }).catch(() => undefined);
+      }
+      if (response && response.status() >= 500) throw new Error(`HTTP ${response.status()}`);
+      return;
+    } catch (error) {
+      firstError ??= error;
+      if (address === original && /ERR_NAME_NOT_RESOLVED|ENOTFOUND/i.test(String(error))) unresolved = true;
+    }
+  }
+  // Describe what happened to the address the lead gave us, not to a guessed spelling.
+  throw new SiteUnreachableError(plainLoadError(firstError));
+}
+
 export interface PageCapture {
   pageUrl: string;
   pageText: string;
   screenshot: Buffer;
+  /** Desktop facts read from the same page load. Phone facts are added by the caller. */
+  facts: SiteFacts | null;
 }
 
 export async function launchScreenshotBrowser(): Promise<Browser> {
@@ -86,7 +186,7 @@ export async function captureHomepage(
     userAgent: BROWSER_USER_AGENT,
   });
   try {
-    await page.goto(website, { waitUntil: "domcontentloaded", timeout: 25_000 });
+    await openWithRetries(page, website);
     await page.waitForTimeout(1200);
     const extracted = await page.evaluate(() => {
       const description =
@@ -109,10 +209,25 @@ export async function captureHomepage(
       .filter(Boolean)
       .join("\n");
     if (looksBlocked(pageText)) throw new SiteBlockedError();
+    let facts: SiteFacts | null = null;
+    try {
+      const desktop = await desktopFacts(page);
+      facts = {
+        headline: desktop.headline,
+        menuLinks: desktop.menuLinks,
+        bookingLabels: desktop.bookingLabels,
+        desktopBookingAboveFold: desktop.desktopBookingAboveFold,
+        bookingPlatform: detectPlatform(desktop.urls),
+        mobile: null,
+      };
+    } catch {
+      facts = null;
+    }
     return {
       pageUrl: page.url(),
       pageText,
       screenshot,
+      facts,
     };
   } finally {
     await page.close();

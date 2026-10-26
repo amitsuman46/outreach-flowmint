@@ -33,6 +33,8 @@ model Prospect {
   annualRevenue   String?
   /// Original spreadsheet row as JSON.
   raw             String   @default("{}")
+  /// ppt: concept site + PDF proposal. template: one template site, proposal written into the email.
+  mode            String   @default("ppt")
   /// imported | fit | rejected | audited | drafted | sent | replied
   status          String   @default("imported")
   rejectReason    String?
@@ -46,6 +48,7 @@ model Prospect {
   inbox    InboxMessage[]
 
   @@index([status])
+  @@index([mode, status])
   @@index([createdAt])
 }
 
@@ -58,6 +61,12 @@ model Audit {
   pageText       String?
   /// JSON array of { area, observation, suggestion }.
   findings       String   @default("[]")
+  /// JSON SiteFacts measured on desktop and phone (menu size, booking labels, platform...).
+  facts          String?
+  /// False when the site could not be opened, so the email cannot be built on a review.
+  reachable      Boolean  @default(true)
+  /// down: timed out or no response. blocked: a firewall or captcha stopped the browser.
+  unreachableReason String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
@@ -128,6 +137,8 @@ model OutreachRun {
   id        String   @id @default(cuid())
   /// prepare | refresh
   kind      String   @default("prepare")
+  /// Which workflow the run belongs to: ppt | template
+  mode      String   @default("ppt")
   /// running | done | error
   status    String
   total     Int
@@ -144,4 +155,11 @@ model MailCursor {
   lastUid     Int     @default(0)
   /// IMAP UIDVALIDITY. When it changes the folder was renumbered and the cursor restarts.
   uidValidity String?
+}
+
+/// Small key/value settings shared by everyone using the desk, e.g. the template site link.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }

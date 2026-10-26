@@ -64,7 +64,7 @@ export function RunIndicator() {
       <Spinner size={14} className="shrink-0 text-mint-600" />
       <div className="min-w-0">
         <p className="truncate text-[12px] font-medium text-slate-800">
-          {run.kind === "refresh" ? "Refreshing" : "Preparing"} {run.done}/{run.total}
+          {run.kind === "refresh" ? "Refreshing" : "Preparing"} {run.mode === "template" ? "template" : "PPT"} leads {run.done}/{run.total}
           <span className="font-normal text-slate-500"> · {run.step ?? "starting"}</span>
         </p>
         <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-mint-100">

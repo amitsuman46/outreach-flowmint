@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/ui";
 import { mailReady } from "@/lib/mail";
 import { toDetail } from "@/lib/present";
 import { prisma } from "@/lib/prisma";
+import { templateSiteUrl } from "@/lib/settings";
 import { netlifyReady, signature } from "@/lib/site-config";
 
 export const dynamic = "force-dynamic";
@@ -28,13 +29,15 @@ export default async function ProspectPage({ params }: Context) {
   });
   if (!prospect) notFound();
   const detail = toDetail(prospect);
-  const back = detail.status === "rejected" ? "/desk/rejected" : "/desk/gathered";
+  const template = detail.mode === "template";
+  const back = detail.status === "rejected" ? "/desk/rejected" : template ? "/desk/template/leads" : "/desk/gathered";
+  const templateUrl = template ? await templateSiteUrl() : null;
 
   return (
     <div>
       <Link href={back} className="inline-flex items-center gap-1.5 text-[13px] text-slate-500 hover:text-slate-900">
         <IconArrowLeft size={14} />
-        {detail.status === "rejected" ? "Rejected" : "Leads"}
+        {detail.status === "rejected" ? "Rejected" : template ? "Leads · Without PPT" : "Leads · With PPT"}
       </Link>
       <header className="mt-4 mb-6 flex flex-wrap items-center gap-4 animate-fade-in">
         <Avatar name={detail.company} className="size-12 rounded-2xl text-sm" />
@@ -54,7 +57,12 @@ export default async function ProspectPage({ params }: Context) {
           </p>
         </div>
         {detail.status === "drafted" && detail.audit ? (
-          <RefreshButton ids={[detail.id]} count={1} label="Refresh with latest" />
+          <RefreshButton
+            ids={[detail.id]}
+            mode={detail.mode}
+            count={1}
+            label={template ? "Rewrite with latest" : "Refresh with latest"}
+          />
         ) : null}
       </header>
       {detail.rejectReason ? (
@@ -65,6 +73,7 @@ export default async function ProspectPage({ params }: Context) {
         mailReady={mailReady()}
         netlifyReady={netlifyReady()}
         signature={signature()}
+        templateUrl={templateUrl}
       />
     </div>
   );

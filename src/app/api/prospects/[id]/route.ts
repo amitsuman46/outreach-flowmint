@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { updateDraftSchema } from "@/lib/schemas";
 import { readSession } from "@/lib/session";
+import { titleCase } from "@/lib/email-template";
 import { ensureOptOut } from "@/lib/opt-out";
 
 export const runtime = "nodejs";
@@ -38,7 +39,7 @@ export async function PATCH(request: Request, context: Context) {
   await prisma.outreachMessage.update({
     where: { id: message.id },
     data: {
-      subject: parsed.data.subject,
+      subject: titleCase(parsed.data.subject),
       body: ensureOptOut(parsed.data.body),
       error: null,
     },

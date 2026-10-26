@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { PREPARE_BATCH } from "@/lib/constants";
-import type { RunView } from "@/lib/schemas";
+import type { LeadMode, RunView } from "@/lib/schemas";
 import { IconCheck, IconFile, IconSparkles, IconUpload } from "./icons";
 import { announceRun } from "./run-indicator";
 import { useToast } from "./toast";
@@ -14,9 +14,10 @@ interface ImportResult {
   updated: number;
   rejected: number;
   skipped: number;
+  otherList?: number;
 }
 
-export function UploadCard() {
+export function UploadCard({ mode = "ppt" }: { mode?: LeadMode }) {
   const router = useRouter();
   const toast = useToast();
   const input = useRef<HTMLInputElement>(null);
@@ -46,6 +47,7 @@ export function UploadCard() {
     setUploading(true);
     const form = new FormData();
     form.set("file", file);
+    form.set("mode", mode);
     try {
       const response = await fetch("/api/prospects/import", { method: "POST", body: form });
       const data = (await response.json().catch(() => ({}))) as ImportResult & { error?: string };
@@ -56,7 +58,13 @@ export function UploadCard() {
       setResult(data);
       setFile(null);
       if (input.current) input.current.value = "";
-      toast("success", `Imported ${data.created + data.updated} people`, `${data.created} new, ${data.updated} updated`);
+      toast(
+        "success",
+        `Imported ${data.created + data.updated} people`,
+        `${data.created} new, ${data.updated} updated${
+          data.otherList ? `, ${data.otherList} already in progress in the other workflow` : ""
+        }`,
+      );
       router.refresh();
     } catch {
       toast("error", "Upload failed", "Could not reach the desk server.");
@@ -125,12 +133,16 @@ export function UploadCard() {
   );
 }
 
-const STEPS = ["Fit check", "Site review", "Concept + PDF", "Draft"];
+const STEPS: Record<LeadMode, string[]> = {
+  ppt: ["Fit check", "Site review", "Concept + PDF", "Draft"],
+  template: ["Fit check", "Site review", "Proposal email"],
+};
 
-function stepIndex(step: string | null): number {
+function stepIndex(step: string | null, mode: LeadMode): number {
   if (!step) return -1;
   if (step.startsWith("Checking fit")) return 0;
   if (step.startsWith("Reviewing")) return 1;
+  if (mode === "template") return step.startsWith("Drafting") || step.startsWith("Rewriting") ? 2 : -1;
   if (step.startsWith("Building") || step.startsWith("Publishing")) return 2;
   if (step.startsWith("Drafting")) return 3;
   return -1;
@@ -140,10 +152,15 @@ export function PrepareCard({
   initialRun,
   aiReady,
   waiting,
+  mode = "ppt",
+  blocked,
 }: {
   initialRun: RunView | null;
   aiReady: boolean;
   waiting: number;
+  mode?: LeadMode;
+  /** Shown instead of starting, e.g. when the template site link is missing. */
+  blocked?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -166,7 +183,11 @@ export function PrepareCard({
   async function start() {
     setStarting(true);
     try {
-      const response = await fetch("/api/prospects/prepare", { method: "POST" });
+      const response = await fetch("/api/prospects/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
       const data = (await response.json().catch(() => ({}))) as { run?: RunView; error?: string };
       if (!response.ok || !data.run) {
         toast("error", "Could not start Prepare", data.error);
@@ -181,19 +202,26 @@ export function PrepareCard({
   }
 
   const percent = run && run.total ? Math.round((run.done / run.total) * 100) : 0;
-  const current = stepIndex(run?.step ?? null);
+  // Results of the last run only belong on the card of the workflow it ran in.
+  const ownRun = run?.mode === mode ? run : null;
+  const current = stepIndex(run?.step ?? null, run?.mode ?? mode);
+  const steps = STEPS[run?.mode ?? mode];
 
   return (
     <Card>
       <CardHeader
         icon={<IconSparkles size={16} />}
         title="Prepare"
-        description={`Fit check, site review, concept page, PDF and draft for the next ${PREPARE_BATCH}. Nothing is sent.`}
+        description={
+          mode === "template"
+            ? `Fit check, site review and a custom proposal email for the next ${PREPARE_BATCH}. Nothing is sent.`
+            : `Fit check, site review, concept page, PDF and draft for the next ${PREPARE_BATCH}. Nothing is sent.`
+        }
         action={
           <Button
             variant="primary"
             onClick={start}
-            disabled={busy || !aiReady || waiting === 0}
+            disabled={busy || !aiReady || waiting === 0 || Boolean(blocked)}
             loading={starting}
             icon={<IconSparkles size={15} />}
           >
@@ -223,8 +251,8 @@ export function PrepareCard({
               </span>
               {run.step ?? "Starting…"}
             </p>
-            <ol className="mt-4 grid grid-cols-4 gap-2">
-              {STEPS.map((label, index) => (
+            <ol className={cx("mt-4 grid gap-2", steps.length === 4 ? "grid-cols-4" : "grid-cols-3")}>
+              {steps.map((label, index) => (
                 <li
                   key={label}
                   className={cx(
@@ -244,15 +272,17 @@ export function PrepareCard({
             <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-4 py-3">
               <span className="text-2xl font-semibold tracking-tight text-slate-900 tabular-nums">{waiting}</span>
               <span className="text-[13px] leading-5 text-slate-500">
-                {waiting === 1 ? "lead is" : "leads are"} waiting, including drafts that still need a concept page.
+                {waiting === 1 ? "lead is" : "leads are"} waiting
+                {mode === "ppt" ? ", including drafts that still need a concept page." : " for a fit check, site review and proposal email."}
               </span>
             </div>
             {!aiReady ? <Notice tone="warn">Add OPENAI_API_KEY to .env before Prepare can run.</Notice> : null}
-            {run?.status === "error" && run.error ? <Notice tone="error">{run.error}</Notice> : null}
-            {run?.status === "done" && run.error ? <Notice tone="warn">{run.error}</Notice> : null}
-            {run?.status === "done" && !run.error && run.total > 0 ? (
+            {blocked ? <Notice tone="warn">{blocked}</Notice> : null}
+            {ownRun?.status === "error" && ownRun.error ? <Notice tone="error">{ownRun.error}</Notice> : null}
+            {ownRun?.status === "done" && ownRun.error ? <Notice tone="warn">{ownRun.error}</Notice> : null}
+            {ownRun?.status === "done" && !ownRun.error && ownRun.total > 0 ? (
               <p className="flex items-center gap-1.5 text-[13px] text-slate-500">
-                <IconCheck size={14} className="text-mint-600" /> Last run prepared {run.done} of {run.total}.
+                <IconCheck size={14} className="text-mint-600" /> Last run prepared {ownRun.done} of {ownRun.total}.
               </p>
             ) : null}
           </div>

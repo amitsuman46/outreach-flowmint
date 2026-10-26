@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { parseApolloSheet } from "@/lib/apollo";
 import { importProspects } from "@/lib/import-prospects";
+import { asMode } from "@/lib/schemas";
 import { readSession } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -28,6 +29,6 @@ export async function POST(request: Request) {
   if (!rows.length) {
     return NextResponse.json({ error: "No rows found" }, { status: 400 });
   }
-  const result = await importProspects(rows);
+  const result = await importProspects(rows, asMode(form.get("mode")));
   return NextResponse.json(result);
 }
