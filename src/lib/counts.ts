@@ -13,5 +13,7 @@ export type DeskCounts = {
   /** Messages in the Hostinger Sent folder. */
   sent: number;
   replies: number;
+  /** Follow-ups that are due and waiting for you to send them. */
+  followUps: number;
   total: number;
 };

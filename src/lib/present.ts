@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { Audit, OutreachMessage, Prospect, Proposal } from "@prisma/client";
 import type { DeskCounts } from "./counts";
+import { followUpQueues } from "./followups";
 import { ensureOptOut } from "./opt-out";
 import { parseFindings } from "./pipeline";
 import { prisma } from "./prisma";
@@ -118,11 +119,12 @@ const ACTIVE = ["imported", "fit", "audited", "drafted"];
 const LISTED = [...ACTIVE, "sent", "replied"];
 
 export async function deskCounts(): Promise<DeskCounts> {
-  const [grouped, sent, replies] = await Promise.all([
+  const [grouped, sent, replies, followUps] = await Promise.all([
     prisma.prospect.groupBy({ by: ["mode", "status"], _count: true }),
     // Everything in the Hostinger Sent folder, including mail sent from webmail.
     prisma.inboxMessage.count({ where: { direction: "out" } }),
     prisma.inboxMessage.count({ where: { direction: "in" } }),
+    followUpQueues().then((queues) => queues.reduce((sum, queue) => sum + queue.outstanding.length, 0)),
   ]);
   const count = (mode: string | null, statuses: string[]) =>
     grouped
@@ -141,6 +143,7 @@ export async function deskCounts(): Promise<DeskCounts> {
     contacted: count(null, ["sent", "replied"]),
     sent,
     replies,
+    followUps,
     total: grouped.reduce((sum, row) => sum + row._count, 0),
   };
 }

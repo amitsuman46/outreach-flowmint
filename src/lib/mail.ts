@@ -197,7 +197,7 @@ export async function sendApprovedDraft(
   }
 }
 
-async function recordOutgoing(input: {
+export async function recordOutgoing(input: {
   prospectId?: string;
   from: string;
   to: string;
@@ -290,6 +290,10 @@ export async function sendOutreachMail(input: {
   text: string;
   html?: string;
   files?: OutgoingFile[];
+  /** Message-ID this replies to, so the lead's mail app keeps it in the same thread. */
+  inReplyTo?: string;
+  /** Every earlier Message-ID in the thread, oldest first. */
+  references?: string[];
 }): Promise<SendResult> {
   const cfg = mailConfig();
   if (!cfg.user || !cfg.pass) {
@@ -312,6 +316,8 @@ export async function sendOutreachMail(input: {
     text: input.text,
     html: input.html,
     messageId,
+    inReplyTo: input.inReplyTo,
+    references: input.references,
     headers: {
       "List-Unsubscribe": `<mailto:${cfg.user}?subject=unsubscribe>`,
     },

@@ -54,3 +54,12 @@ node --env-file=.env --import tsx scripts/build-proposal.ts <prospectId>
 ## Sending
 
 The review screen shows the email exactly as it will arrive: the message, the concept and PDF links, and the FlowMint signature. Attaching the PDF is a per-email switch and off by default, since attachments on a first email can lower inbox placement. Each sent email is copied into the Hostinger Sent folder. If that copy fails, the desk says so instead of hiding it.
+
+## Follow-ups
+
+Nothing is sent automatically. The Follow-ups page lists, for each step, the leads who are still marked Sent (no reply) and are due: follow-up 1 a set number of days after the first email (3 by default), and follow-up 2 a set number of days after the first email (7 by default) and only once follow-up 1 has gone out.
+
+- Press "Send follow-up N" to send that step to everyone on its list. The desk syncs the mailbox first, so anyone who replied drops off, then sends one at a time in the background. You can leave the page, or press Stop.
+- Each follow-up goes out as a reply in the same thread (`Re:` subject, `In-Reply-To` and `References` headers), with the signature and opt-out line.
+- A failed send stays on the list, so sending again retries it. After 3 failures in a row the batch stops, since that usually means a mailbox problem.
+- The days and text for each step are set on the same page. `{firstName}` and `{company}` are filled in per lead.

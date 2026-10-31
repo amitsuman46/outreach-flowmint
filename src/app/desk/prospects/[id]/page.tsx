@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { FollowUpHistory } from "@/components/follow-ups";
 import { IconArrowLeft, IconMail } from "@/components/icons";
 import { ProspectEditor } from "@/components/prospect-editor";
 import { RefreshButton } from "@/components/refresh-button";
@@ -25,6 +26,7 @@ export default async function ProspectPage({ params }: Context) {
       audit: true,
       proposal: true,
       messages: { orderBy: { createdAt: "desc" } },
+      followUps: { orderBy: { step: "asc" } },
     },
   });
   if (!prospect) notFound();
@@ -75,6 +77,31 @@ export default async function ProspectPage({ params }: Context) {
         signature={signature()}
         templateUrl={templateUrl}
       />
+      {prospect.followUps.length ? (
+        <section className="mt-8">
+          <h2 className="mb-1 text-[15px] font-semibold text-slate-900">Follow-ups</h2>
+          <p className="mb-3 text-[13px] text-slate-500">
+            Replies to the first email, sent from the{" "}
+            <Link href="/desk/followups" className="font-medium text-mint-700 hover:underline">
+              Follow-ups
+            </Link>{" "}
+            page.
+          </p>
+          <FollowUpHistory
+            empty="No follow-ups."
+            items={prospect.followUps.map((row) => ({
+              id: row.id,
+              step: row.step,
+              subject: row.subject,
+              body: row.body,
+              status: row.status as "sending" | "sent" | "failed",
+              sentAt: row.sentAt?.toISOString() ?? null,
+              error: row.error,
+              updatedAt: row.updatedAt.toISOString(),
+            }))}
+          />
+        </section>
+      ) : null}
     </div>
   );
 }

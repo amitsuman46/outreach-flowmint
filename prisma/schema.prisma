@@ -44,8 +44,9 @@ model Prospect {
 
   audit    Audit?
   proposal Proposal?
-  messages OutreachMessage[]
-  inbox    InboxMessage[]
+  messages  OutreachMessage[]
+  inbox     InboxMessage[]
+  followUps FollowUp[]
 
   @@index([status])
   @@index([mode, status])
@@ -88,6 +89,27 @@ model OutreachMessage {
   updatedAt  DateTime  @updatedAt
 
   @@index([prospectId])
+  @@index([status])
+}
+
+/// A reply sent in the same thread when the lead hasn't answered. Sent only when you start it on the Follow-ups page.
+model FollowUp {
+  id         String    @id @default(cuid())
+  prospectId String
+  prospect   Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  /// 1 for the first follow-up, 2 for the second...
+  step       Int
+  subject    String
+  body       String
+  /// sending | sent | failed. A failed one is outstanding again.
+  status     String    @default("sending")
+  messageId  String?
+  sentAt     DateTime?
+  error      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([prospectId, step])
   @@index([status])
 }
 

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { DeskCounts } from "@/lib/counts";
-import { IconBan, IconHome, IconInbox, IconSend, IconSparkles, IconUsers } from "./icons";
+import { IconBan, IconCalendar, IconHome, IconInbox, IconSend, IconSparkles, IconUsers } from "./icons";
 import { cx } from "./ui";
 
 type NavLink = {
@@ -33,6 +33,7 @@ const groups: { label: string; links: NavLink[] }[] = [
     links: [
       { href: "/desk/sent", label: "Sent items", icon: IconSend, count: (c) => c.sent },
       { href: "/desk/inbox", label: "Mail", icon: IconInbox, count: (c) => c.replies },
+      { href: "/desk/followups", label: "Follow-ups", icon: IconCalendar, count: (c) => c.followUps },
       { href: "/desk/rejected", label: "Rejected", icon: IconBan, count: (c) => c.rejected },
     ],
   },
