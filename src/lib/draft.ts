@@ -5,73 +5,100 @@ import { prisma } from "./prisma";
 import { practiceContentSchema, proposalContentSchema, type Brand } from "./schemas";
 import { describeFacts, type SiteFacts } from "./site-facts";
 
+/** What FlowMint does, in the words every first email uses to introduce it. */
+const ABOUT_FLOWMINT =
+  "FlowMint is a small studio that builds websites for therapy and psychology practices and sets up simple AI and automation behind them, so more of the right people get in touch and book, and the team spends less time on admin.";
+
 /**
- * The style comes from the emails FlowMint sent by hand in October 2026, which are the
- * benchmark: a real compliment, two or three problems a visitor would feel, the concept
- * link on its own line, what the concept changes, and a 15-minute call.
+ * Growth ideas the model chooses from. Each has the signal in the input that makes it fit,
+ * so two practices with different sites get different ideas.
  */
-const DRAFT_SYSTEM_PROMPT = `
-You write a first cold email from a designer at FlowMint, a small studio that redesigns websites for therapy and psychology practices. The reader is a busy practice owner or psychologist. It must read like one thoughtful person wrote it after really looking at their site, not like marketing and not like AI.
+const GROWTH_IDEAS = `
+- A friendly AI assistant on the website that answers common questions day and night (fees, Medicare or NDIS rebates, wait times, which clinician suits what) and hands real enquiries to the team. Fits when the site has a lot of information to dig through, many services, or no quick way to ask a question.
+- Online booking built into the site with automatic text and email reminders, so fewer sessions are missed. Fits when no booking platform was detected. If one was detected, offer automatic reminders and follow-ups that work with that platform and say the booking itself stays exactly as it is.
+- An instant reply and a simple online intake form for every new enquiry, so a worried person hears back within minutes and the team has their details before the first session. Fits when the only way in is a phone number, an email address or a basic contact form.
+- An automatic waitlist that tells people when a spot opens, so nobody slips through the cracks. Fits when the site mentions a waitlist, closed books or limited availability.
+- A clear page and quick form for GPs and other referrers, with automatic confirmation. Fits when the practice takes referrals, mental health care plans or NDIS clients.
+- Gentle automatic follow-ups after a first session, such as a check-in or a request for a Google review. Fits a growing practice that wants more people to find and trust it.
+- Help being found by local people searching on Google for the kind of support they offer. Fits when the homepage doesn't clearly say what they help with or where they are.
+`.trim();
 
-Structure, in this order, each as its own short paragraph:
-1. "Hi <first name>," then one or two sentences of genuine, specific praise for something distinctive about the practice, taken from the page text. Quote their own words when there is a good line. Never generic praise like "great website".
-2. Start with "At the moment, though," or "I noticed the website doesn't ... though." Name two or three concrete problems a visitor would feel, using the measured facts when they exist (numbers of menu links, different booking button names, nothing to tap on a phone, a popup covering the screen). Describe them from the visitor's side, for example "a worried parent has to go digging". No technical words.
-3. One line introducing the concept, such as "So I built a redesign with <practice>'s name on it:" or "I built a redesign to show what it could look like:". Then the next line is exactly ${CONCEPT_LINK} on its own.
-4. Two sentences on what the redesign changes, matched to the problems in paragraph 2. If an online booking platform was detected, say the redesign keeps their <platform> booking exactly as it is.
-5. One short question asking for a 15-minute call to look at it together.
-6. "Warmly," on its own line. Do not write a name after it. The signature is added automatically.
-7. Then this exact line: ${OPT_OUT_LINE}
-
+const SHARED_RULES = `
 Rules:
-- 90 to 140 words before the opt-out line. Short sentences. Contractions are fine.
-- Plain words a psychologist would use. Never use: SEO, UX, UI, H1, CTA, call-to-action, conversion, keywords, optimise, optimize, enhance, leverage, elevate, seamless, streamline, boost, robust, tailored, user experience, search relevance, digital presence, online presence.
-- Never open with "I hope", "I came across your website", or "I noticed that". No "Additionally", "Furthermore" or "Moreover". No em dashes. No exclamation marks. No bullet points.
-- Do not mention a PDF, deck or attachment. A line about it is added under the link automatically.
-- Use only facts from the input. Never invent numbers, results, clients, prices, or problems.
-- If no concept page exists, skip paragraphs 3 and 4 and offer to sketch one instead.
+- Australian spelling. Short sentences. Contractions are fine. Warm, plain and specific, like one thoughtful person wrote it after really looking at their site, not like marketing and not like AI.
+- Plain words a psychologist would use. "AI" and "automation" are fine, always explained in terms of what it does for their clients or their team. Never use: SEO, UX, UI, H1, CTA, call-to-action, conversion, keywords, optimise, optimize, enhance, leverage, elevate, seamless, streamline, boost, robust, tailored, user experience, search relevance, digital presence, online presence.
+- Never open with "I hope", "I came across your website", or "I noticed that". No "Additionally", "Furthermore" or "Moreover". No em dashes. No exclamation marks.
+- Use only facts from the input. Never invent numbers, results, clients, prices, reviews, or problems. Ideas for the future are offers ("we could set up..."), never claims about what they have now unless the input shows it.
+- The growth section must be specific to this practice. Say in each item why it suits them, using what is in the input (their services, who they see, their booking setup, what is on the homepage). Never a generic list.
 
-Subject line: under 55 characters, in Title Case (every word starts with a capital letter), specific to this practice and the visitor benefit. Add " (Demo Inside)" only when it still fits. Never "Ideas for <company> website" or anything generic.
-
-Two emails FlowMint sent that got the tone right:
-
-Subject: A Calmer Website For Next Step (Demo Inside)
-Hi Ian,
-
-I came across Next Step and loved that every session also supports Compassion & Opportunity International. That's a story most practices can't tell.
-
-I noticed the website doesn't lead with it, though. On a phone, the cookie notice and chat bubble cover most of the first screen, and the homepage doesn't yet show what you help with or what sessions cost.
-
-So I built a quick redesign with Next Step's name on it:
-${CONCEPT_LINK}
-
-It keeps your Splose booking exactly as it is and puts "Book a session" one tap away on every page.
-
-Would you be open to a 15-minute call to look at it together?
-
-Warmly,
-${OPT_OUT_LINE}
-
-Subject: Helping Parents Find You Faster (Demo Inside)
-Hi Miranda,
-
-Your site describes your work as warm and compassionate, and the range you offer is wonderful: children through to adults, plus EMDR and autism and ADHD assessments.
-
-Right now, though, the homepage doesn't show any of that. On a phone there's no message, phone number or way to book, so a worried parent has to go digging.
-
-I built a redesign to show how it could feel instead:
-${CONCEPT_LINK}
-
-It puts your specialities and funding options on the first screen, with "Book" and "Call" one tap away.
-
-Would a 15-minute call to look at it together be useful?
-
-Warmly,
-${OPT_OUT_LINE}
-
-Write a new email for the practice in the input. Do not reuse the facts or sentences of these examples.
+Subject line: under 55 characters, in Title Case (every word starts with a capital letter), specific to this practice and what they would gain. Never "Ideas for <company> website" or anything generic.
 
 Return JSON with subject and body.
 `.trim();
+
+/** Both modes share one structure; only the example-site paragraph differs. */
+function designedPrompt(kind: "concept" | "template"): string {
+  const showcase =
+    kind === "concept"
+      ? `5. If a concept page exists: one sentence such as "I built a redesign with <practice>'s name on it, so you can see these ideas in place:", then the next line is exactly ${CONCEPT_LINK} on its own. If no concept page exists, skip this part and the link marker. Do not mention a PDF, deck or attachment; a line about it is added under the link automatically.`
+      : `5. One sentence introducing a website FlowMint built in the same style, as an example of the kind of site we would make for them. It is not their site and not a redesign of it. Then the next line is exactly ${TEMPLATE_LINK} on its own.`;
+  const link = kind === "concept" ? CONCEPT_LINK : TEMPLATE_LINK;
+  const showcaseExample =
+    kind === "concept"
+      ? `I built a redesign with your practice's name on it, so you can see these ideas in place:\n${CONCEPT_LINK}`
+      : `Here's a site we built in the same spirit, so you can see the style we'd bring to yours:\n${TEMPLATE_LINK}`;
+
+  return `
+You write a first cold email from a designer at FlowMint. ${ABOUT_FLOWMINT} The reader is a busy practice owner or psychologist. The email is a short, personal proposal shown in a colourful designed layout, so follow the structure and markup exactly.
+
+Structure, each part separated by a blank line:
+1. "Hi <first name>,"
+2. "## Quick introduction" then exactly two sentences in one paragraph. First: who we are and what we do (FlowMint builds websites for therapy and psychology practices and sets up AI and automation that bring in more of the right clients and cut admin). Second: genuine, specific praise for something distinctive about their practice, from the page text, quoting their own words when there is a good line, and why that made you write.
+3. "## What could work better" then two or three items, each on its own line as "- **<short title>**: <what a visitor feels now, from their side>. <What we would change.>" Use the measured facts when they exist (number of menu links, different booking button labels, nothing to tap on a phone, a popup covering the screen). No technical words. If an online booking platform was detected, say it stays exactly as it is.
+4. "## How we can help you grow" then two or three items, "- **<short title>**: <one or two sentences>", chosen from the growth ideas below to fit this practice. Each one says what we would set up and what it means for their clients or their team. Direction of change only, never numbers, percentages or guarantees.
+${showcase}
+6. "## Let's talk" then one paragraph of two sentences proposing a 15-minute call: what we would cover (walk through these ideas on their own site and pick the one or two that would help most first) and an easy ask, such as whether a quick call this week or next would suit. No pressure, no obligation wording like "no strings attached".
+7. "Warmly," on its own line. No name after it; the signature is added automatically.
+8. This exact line: ${OPT_OUT_LINE}
+
+Growth ideas to choose from (pick the ones the input supports, and reword them for this practice):
+${GROWTH_IDEAS}
+
+Length: 200 to 340 words before the opt-out line.
+
+${SHARED_RULES}
+
+Example of the tone and structure (do not reuse its facts or sentences):
+
+Subject: Helping Worried Parents Reach Miranda Sooner
+Hi Miranda,
+
+## Quick introduction
+I'm with FlowMint, a small studio that builds websites for psychology practices and sets up simple AI and automation so more of the right families get in touch and your team spends less time on admin. Your site describes your work as "warm and compassionate", and the range you offer, from children through to adults plus EMDR and assessments, is exactly why I wanted to reach out.
+
+## What could work better
+- **Nothing to tap on a phone**: A parent on their phone sees no message, number or way to book on the first screen. We'd put "Book" and "Call" one tap away.
+- **Your specialities are hidden**: EMDR and assessments only appear deep in the menu. We'd lead with what you help with, so families know straight away they're in the right place.
+
+## How we can help you grow
+- **Answers at 10pm**: Parents often search late at night. An AI assistant on your site could answer questions about assessments, fees and wait times, then pass genuine enquiries to your team.
+- **A quick reply to every enquiry**: An instant response and a short intake form means a worried parent hears back within minutes, and you have their details before the first session.
+- **Fewer missed sessions**: Automatic text and email reminders that work alongside your current booking setup.
+
+${showcaseExample}
+
+## Let's talk
+I'd love to walk you through these ideas on your own site and work out which one or two would make the biggest difference first. Would a 15-minute call this week or next suit you?
+
+Warmly,
+${OPT_OUT_LINE}
+
+Write a new email for the practice in the input. The link marker in this mode is ${link}.
+`.trim();
+}
+
+const DRAFT_SYSTEM_PROMPT = designedPrompt("concept");
+const TEMPLATE_DRAFT_SYSTEM_PROMPT = designedPrompt("template");
 
 const BANNED: [RegExp, string][] = [
   [/\b(seo|ux|ui|h1|cta)\b/i, "technical abbreviations"],
@@ -81,24 +108,59 @@ const BANNED: [RegExp, string][] = [
   [/i hope (this|you)|came across your (website|site)|i noticed that/i, "stock openers"],
   [/—/, "em dashes"],
   [/!/, "exclamation marks"],
-  [/\b(pdf|deck|attach)/i, "a mention of the PDF or deck (it is added automatically)"],
+];
+const DECK_MENTION: [RegExp, string] = [/\b(pdf|deck|attach)/i, "a mention of the PDF or deck (it is added automatically)"];
+
+const SECTIONS: [RegExp, string][] = [
+  [/^##\s+quick introduction/im, "## Quick introduction"],
+  [/^##\s+what could work better/im, "## What could work better"],
+  [/^##\s+how we can help you grow/im, "## How we can help you grow"],
+  [/^##\s+let.?s talk/im, "## Let's talk"],
 ];
 
-export function draftProblems(subject: string, body: string, needsLink: boolean): string[] {
+/** Checks shared by both modes. `link` is the marker this draft must (or must not) carry. */
+function designedProblems(subject: string, body: string, link: string | null, banned: [RegExp, string][]): string[] {
   const text = `${subject}\n${body.replace(OPT_OUT_LINE, "")}`;
-  const problems = BANNED.filter(([pattern]) => pattern.test(text)).map(([, label]) => `uses ${label}`);
-  const words = body.replace(OPT_OUT_LINE, "").replace(CONCEPT_LINK, "").split(/\s+/).filter(Boolean).length;
-  if (words < 70) problems.push(`is too short (${words} words)`);
-  if (words > 165) problems.push(`is too long (${words} words)`);
-  if (needsLink && !/^[ \t]*\{\{concept_link\}\}[ \t]*$/m.test(body)) {
-    problems.push(`does not have ${CONCEPT_LINK} alone on its own line`);
+  const problems = banned.filter(([pattern]) => pattern.test(text)).map(([, label]) => `uses ${label}`);
+  const words = body
+    .replace(OPT_OUT_LINE, "")
+    .replace(CONCEPT_LINK, "")
+    .replace(TEMPLATE_LINK, "")
+    .replace(/[#*]/g, "")
+    .split(/\s+/)
+    .filter(Boolean).length;
+  if (words < 180) problems.push(`is too short (${words} words)`);
+  if (words > 400) problems.push(`is too long (${words} words)`);
+  const missing = SECTIONS.filter(([pattern]) => !pattern.test(body)).map(([, label]) => `"${label}"`);
+  if (missing.length) problems.push(`is missing the section${missing.length > 1 ? "s" : ""} ${missing.join(", ")}`);
+  for (const section of body.split(/^##\s+/m).slice(1)) {
+    const name = section.split("\n")[0].trim().toLowerCase();
+    if (!/what could work better|how we can help/.test(name)) continue;
+    if ((section.match(/^\s*-\s+\*\*.+?\*\*/gm) ?? []).length < 2) {
+      problems.push(`has fewer than two "- **Title**: sentence" items under "${section.split("\n")[0].trim()}"`);
+    }
+  }
+  const introSection = body.split(/^##\s+/m).find((section) => /^quick introduction/i.test(section)) ?? "";
+  const intro = introSection.split("\n").slice(1).join(" ").trim();
+  if (intro && (intro.match(/[.?]["”']?(\s|$)/g) ?? []).length > 3) problems.push("has a quick introduction longer than two sentences");
+  if (link) {
+    const pattern = new RegExp(`^[ \\t]*${link.replace(/[{}]/g, "\\$&")}[ \\t]*$`, "m");
+    if (!pattern.test(body)) problems.push(`does not have ${link} alone on its own line`);
+  } else if (body.includes(CONCEPT_LINK) || body.includes(TEMPLATE_LINK)) {
+    problems.push("uses a link marker, but no concept page exists");
   }
   if (!/^warmly,[ \t]*$/im.test(body)) problems.push('does not have "Warmly," alone on its own line');
-  const paragraphs = body.replace(OPT_OUT_LINE, "").split(/\n\s*\n/).filter((block) => block.trim()).length;
-  if (paragraphs < 5) problems.push("is not split into short paragraphs with blank lines between them");
   if (subject.length > 60) problems.push("has a subject over 60 characters");
   if (/^ideas for/i.test(subject.trim())) problems.push("has a generic subject");
   return problems;
+}
+
+export function draftProblems(subject: string, body: string, needsLink: boolean): string[] {
+  return designedProblems(subject, body, needsLink ? CONCEPT_LINK : null, [...BANNED, DECK_MENTION]);
+}
+
+export function templateDraftProblems(subject: string, body: string): string[] {
+  return designedProblems(subject, body, TEMPLATE_LINK, BANNED);
 }
 
 function parse<T>(schema: { safeParse: (v: unknown) => { success: boolean; data?: T } }, raw: string): T | null {
@@ -108,88 +170,6 @@ function parse<T>(schema: { safeParse: (v: unknown) => { success: boolean; data?
   } catch {
     return null;
   }
-}
-
-/**
- * "Without PPT": no concept or PDF. The proposal is the email itself, short and scannable,
- * with one shared template site shown as an example of the work.
- */
-const TEMPLATE_DRAFT_SYSTEM_PROMPT = `
-You write a first cold email from a designer at FlowMint, a small studio that redesigns websites for therapy and psychology practices. The email itself is a short, personal proposal. It is shown in a designed layout, so follow the structure exactly. It must read like one thoughtful person wrote it after really looking at their site, not like marketing and not like AI.
-
-Structure, each part separated by a blank line:
-1. "Hi <first name>,"
-2. One or two sentences of genuine, specific praise for something distinctive about the practice, from the page text. Quote their own words when there is a good line.
-3. One sentence saying you spent some time on their website and noted a few ideas. Keep it plain.
-4. "## What I noticed" then two or three items, each on its own line as "- **<short title>**: <one sentence>". Concrete problems a visitor would feel, using the measured facts when they exist (number of menu links, different booking button labels, nothing to tap on a phone, a popup covering the screen). Visitor's point of view, no technical words.
-5. "## What I'd change" then the same number of items in the same order, "- **<short title>**: <one sentence>". If an online booking platform was detected, say it stays exactly as it is.
-6. "## What this should do for you" then two or three items, "- **<short title>**: <one sentence>". Direction of change only. Never numbers, percentages or guarantees.
-7. One sentence introducing a website FlowMint built in the same style, as an example of the kind of site you would make for them. It is not their site and not a redesign of it.
-8. ${TEMPLATE_LINK} alone on its own line.
-9. One short question asking for a 15-minute call to talk it through.
-10. "Warmly," on its own line. No name after it; the signature is added automatically.
-11. This exact line: ${OPT_OUT_LINE}
-
-Rules:
-- 160 to 260 words before the opt-out line. Short sentences. Contractions are fine. Australian spelling.
-- Plain words a psychologist would use. Never use: SEO, UX, UI, H1, CTA, call-to-action, conversion, keywords, optimise, optimize, enhance, leverage, elevate, seamless, streamline, boost, robust, tailored, user experience, search relevance, digital presence, online presence.
-- Never open with "I hope", "I came across your website", or "I noticed that". No "Additionally", "Furthermore" or "Moreover". No em dashes. No exclamation marks.
-- Use only facts from the input. Never invent numbers, results, clients, prices, or problems.
-
-Subject line: under 55 characters, in Title Case (every word starts with a capital letter), specific to this practice and what they would gain. Never "Ideas for <company> website" or anything generic.
-
-Example of the tone and structure (do not reuse its facts):
-
-Subject: Helping Worried Parents Find Miranda Faster
-Hi Miranda,
-
-Your site describes your work as warm and compassionate, and the range you offer is wonderful: children through to adults, plus EMDR and autism and ADHD assessments.
-
-I spent some time on your website and noted a few ideas.
-
-## What I noticed
-- **Nothing to tap on a phone**: The first screen has no message, phone number or way to book, so a parent has to go digging.
-- **Your specialities are hidden**: EMDR and assessments only appear deep in the menu.
-
-## What I'd change
-- **Book and Call up top**: Put both one tap away on the first screen.
-- **Lead with what you do**: Show your specialities and funding options before anything else.
-
-## What this should do for you
-- **Easier first contact**: Parents can reach you the moment they decide to.
-- **A clearer first impression**: Visitors see straight away that you can help.
-
-Here's a site we built in the same spirit, so you can see the style we'd bring to yours:
-${TEMPLATE_LINK}
-
-Would a 15-minute call to talk it through be useful?
-
-Warmly,
-${OPT_OUT_LINE}
-
-Return JSON with subject and body.
-`.trim();
-
-const TEMPLATE_SECTIONS = [/^##\s+what i noticed/im, /^##\s+what i.?d change/im, /^##\s+what this should do for you/im];
-
-export function templateDraftProblems(subject: string, body: string): string[] {
-  const text = `${subject}\n${body.replace(OPT_OUT_LINE, "")}`;
-  const problems = BANNED.filter(([pattern]) => pattern.test(text)).map(([, label]) => `uses ${label}`);
-  const words = body.replace(OPT_OUT_LINE, "").replace(TEMPLATE_LINK, "").replace(/[#*]/g, "").split(/\s+/).filter(Boolean).length;
-  if (words < 140) problems.push(`is too short (${words} words)`);
-  if (words > 300) problems.push(`is too long (${words} words)`);
-  if (TEMPLATE_SECTIONS.some((pattern) => !pattern.test(body))) {
-    problems.push('is missing one of the sections "## What I noticed", "## What I\'d change", "## What this should do for you"');
-  }
-  const sections = body.split(/^##\s+/m).slice(1);
-  if (sections.some((section) => (section.match(/^\s*-\s+\*\*.+?\*\*/gm) ?? []).length < 2)) {
-    problems.push('has a section with fewer than two "- **Title**: sentence" items');
-  }
-  if (!/^[ \t]*\{\{template_link\}\}[ \t]*$/m.test(body)) problems.push(`does not have ${TEMPLATE_LINK} alone on its own line`);
-  if (!/^warmly,[ \t]*$/im.test(body)) problems.push('does not have "Warmly," alone on its own line');
-  if (subject.length > 60) problems.push("has a subject over 60 characters");
-  if (/^ideas for/i.test(subject.trim())) problems.push("has a generic subject");
-  return problems;
 }
 
 function parseFacts(raw: string | null | undefined): SiteFacts | null {
@@ -208,12 +188,12 @@ function parseFacts(raw: string | null | undefined): SiteFacts | null {
  */
 function unreachablePrompt(reason: "down" | "blocked", detail: string, template: boolean): string {
   return `
-You write a short first cold email from a designer at FlowMint, a small studio that builds and redesigns websites for therapy and psychology practices. This time the practice's website could not be reviewed, so the email cannot mention anything specific about the site's content or design.
+You write a short first cold email from a designer at FlowMint. ${ABOUT_FLOWMINT} This time the practice's website could not be reviewed, so the email cannot mention anything specific about the site's content or design.
 
 ${
   reason === "down"
     ? `When we tried to open their website it did not load for us (${detail}). In one plain, kind sentence, say that when you tried to open their site this week it didn't load for you. Speak only for yourself, say it may be temporary, and never claim it is broken for everyone. In one more sentence say why it matters: someone looking for support may give up before they find the practice.`
-    : `Do not mention any problem with their website, and do not say you could not open it. Instead, in one sentence, say what FlowMint does for practices like theirs: calm, clear homepages that make it easy to book. Make no claim about their current site.`
+    : `Do not mention any problem with their website, and do not say you could not open it. Instead, in one sentence, say what FlowMint does for practices like theirs: calm, clear websites that make it easy to book, plus simple AI and automation such as instant replies to enquiries and appointment reminders. Make no claim about their current site.`
 }
 
 Structure, each part separated by a blank line:
@@ -312,7 +292,7 @@ export async function writeDraft(id: string): Promise<string[]> {
     template
       ? ""
       : hasConcept
-        ? "A concept page exists. Put the link marker in paragraph 3."
+        ? "A concept page exists. Put the link marker on its own line just before the \"## Let's talk\" section."
         : "No concept page exists. Do not use the link marker.",
   ]
     .filter(Boolean)
