@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { STATUS_LABEL } from "@/lib/labels";
 import type { ProspectListItem, ProspectStatus } from "@/lib/schemas";
-import { IconAlert, IconCalendar, IconGlobe, IconSearch, IconTrash, IconUsers } from "./icons";
+import { IconAlert, IconCalendar, IconGlobe, IconRefresh, IconSearch, IconTrash, IconUsers } from "./icons";
 import { useToast } from "./toast";
 import { Button, Card, cx, EmptyState, Notice, relativeTime, StatusBadge } from "./ui";
 
@@ -60,6 +60,7 @@ export function ProspectTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirm, setConfirm] = useState<string[] | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   // Upload days, newest first, for the "Uploaded" filter.
   const uploadDays = useMemo(() => {
@@ -89,6 +90,8 @@ export function ProspectTable({
   const visibleIds = visible.map((row) => row.id);
   const selectedVisible = visibleIds.filter((id) => selected.has(id));
   const allSelected = visibleIds.length > 0 && selectedVisible.length === visibleIds.length;
+  const rejectedIds = new Set(rows.filter((row) => row.status === "rejected").map((row) => row.id));
+  const selectedRejected = selectedVisible.filter((id) => rejectedIds.has(id));
 
   function toggle(id: string) {
     setSelected((current) => {
@@ -120,6 +123,33 @@ export function ProspectTable({
       toast("error", "Could not reach the desk server");
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function restore(ids: string[]) {
+    setRestoring(true);
+    try {
+      const response = await fetch("/api/prospects/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { restored?: number; error?: string };
+      if (!response.ok) {
+        toast("error", "Not restored", data.error);
+        return;
+      }
+      toast(
+        "success",
+        `Restored ${data.restored} ${data.restored === 1 ? "lead" : "leads"}`,
+        "They skip the fit check and get a site review and draft on the next Prepare run.",
+      );
+      setSelected((current) => new Set([...current].filter((id) => !ids.includes(id))));
+      router.refresh();
+    } catch {
+      toast("error", "Could not reach the desk server");
+    } finally {
+      setRestoring(false);
     }
   }
 
@@ -188,6 +218,19 @@ export function ProspectTable({
             <Button size="sm" variant="ghost" className="text-slate-300 hover:bg-white/10 hover:text-white" onClick={() => setSelected(new Set())}>
               Clear
             </Button>
+            {selectedRejected.length ? (
+              <Button
+                size="sm"
+                variant="primary"
+                icon={<IconRefresh size={13} />}
+                loading={restoring}
+                onClick={() => restore(selectedRejected)}
+              >
+                {selectedRejected.length === selectedVisible.length
+                  ? "Restore as leads"
+                  : `Restore ${selectedRejected.length} rejected`}
+              </Button>
+            ) : null}
             <Button size="sm" variant="danger" icon={<IconTrash size={13} />} onClick={() => setConfirm(selectedVisible)}>
               Delete selected
             </Button>
